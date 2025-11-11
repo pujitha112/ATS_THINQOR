@@ -121,6 +121,28 @@ def ensure_admin_exists():
         print("❌ Error ensuring admin:", e)
 
 
+def ensure_user_status_defaults():
+    """Normalize users.status and enforce default at DB level."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return
+        cursor = conn.cursor()
+        # Normalize existing rows
+        cursor.execute("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''")
+        conn.commit()
+        # Enforce default at schema level
+        try:
+            cursor.execute("ALTER TABLE users MODIFY status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'")
+            conn.commit()
+        except Exception:
+            # Ignore if permissions or already set
+            pass
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print("⚠️ Could not enforce user status defaults:", e)
+
 @app.route("/submit-candidate", methods=["POST"])
 def submit_candidate():
     try:
@@ -291,7 +313,19 @@ def get_users():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id, name, email, phone, role, status, created_at FROM usersdata")
+        cursor.execute("""
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                COALESCE(u.phone, ud.phone) AS phone,
+                u.role,
+                COALESCE(u.status, 'ACTIVE') AS status,
+                u.created_at
+            FROM users u
+            LEFT JOIN usersdata ud ON ud.email = u.email
+            ORDER BY u.created_at DESC
+        """)
         users = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -317,15 +351,23 @@ def login():
 
         # Search in 'users' table (registered users)
         cursor.execute("""
-            SELECT id, name, email, role, status 
-            FROM users 
-            WHERE email = %s AND password_hash = %s AND status = 'ACTIVE'
+            SELECT 
+                u.id, 
+                u.name, 
+                u.email,
+                COALESCE(u.phone, ud.phone) AS phone,
+                u.role, 
+                COALESCE(u.status, 'ACTIVE') AS status
+            FROM users u
+            LEFT JOIN usersdata ud ON ud.email = u.email
+            WHERE u.email = %s 
+              AND u.password_hash = %s 
+              AND (u.status = 'ACTIVE' OR u.status IS NULL)
         """, (email, hashed_pw))
         user = cursor.fetchone()
 
         cursor.close()
         conn.close()
-
         if user:
             return jsonify({"message": "✅ Login successful", "user": user}), 200
         else:
@@ -390,6 +432,30 @@ def signup():
 
     except Exception as e:
         return jsonify({"message": "❌ Signup error", "error": str(e)}), 500
+
+
+# -------------------------------------
+# Admin: Update a user's status
+# -------------------------------------
+@app.route('/update-user-status/<int:user_id>', methods=['PUT'])
+def update_user_status(user_id: int):
+    try:
+        data = request.get_json() or {}
+        new_status = data.get('status')
+        if new_status is None:
+            return jsonify({"message": "status is required"}), 400
+
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"message": "Database connection failed"}), 500
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET status = %s WHERE id = %s", (new_status, user_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({"message": "✅ User status updated", "id": user_id, "status": new_status}), 200
+    except Exception as e:
+        return jsonify({"message": "❌ Error updating user status", "error": str(e)}), 500
     
     
 @app.route("/requirements", methods=["POST"])
@@ -511,6 +577,188 @@ def get_clients():
     except Exception as e:
         return jsonify({"message": "Error fetching clients", "error": str(e)}), 500
 
+@app.route("/update-client/<int:id>", methods=["PUT"])
+def update_client(id):
+    data = request.json
+    name = data.get("name")
+    email = data.get("email")
+    contact_person = data.get("contact_person")
+    phone = data.get("phone")
+    address = data.get("address")
+    status = data.get("status", "ACTIVE")  # default to ACTIVE if not provided
+
+    if not name or not email:
+        return jsonify({"message": "Name and Email are required"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            UPDATE clients 
+            SET name=%s, email=%s, contact_person=%s, phone=%s, address=%s, status=%s 
+            WHERE id=%s
+        """, (name, email, contact_person, phone, address, status, id))
+        conn.commit()
+
+        return jsonify({
+            "id": id,
+            "name": name,
+            "email": email,
+            "contact_person": contact_person,
+            "phone": phone,
+            "address": address,
+            "status": status,
+            "message": "Client updated successfully"
+        }), 200
+    except Error as e:
+        return jsonify({"message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+
+# ---------------- DELETE CLIENT ----------------
+@app.route("/delete-client/<int:id>", methods=["DELETE"])
+def delete_client(id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM clients WHERE id=%s", (id,))
+        conn.commit()
+        return jsonify({"id": id, "message": "Client deleted successfully"}), 200
+    except Error as e:
+        return jsonify({"message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+
+#user management
+
+# -------------------------------
+# Get all users (recent first)
+# -------------------------------
+@app.route("/users-list", methods=["GET"])
+def get_users_list():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id, name, email, phone, role, status FROM users ORDER BY id DESC")
+        users = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return jsonify(users), 200
+    except Exception as e:
+        print("❌ Error fetching users:", e)
+        return jsonify({"message": "❌ Error fetching users", "error": str(e)}), 500
+
+
+# -------------------------------
+# Add a new user
+# -------------------------------
+@app.route("/users", methods=["POST"])
+def add_user():
+    try:
+        data = request.json
+        name = data.get("name")
+        email = data.get("email")
+        phone = data.get("phone")
+        password = data.get("password")
+        role = data.get("role", "RECRUITER")
+        status = data.get("status", "ACTIVE")
+    
+
+        if not all([name, email, password]):
+            return jsonify({"message": "Name, email, and password are required"}), 400
+
+        # Hash password
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"message": "Database connection failed"}), 500
+        cursor = conn.cursor(dictionary=True)
+
+        # Check if email exists
+        cursor.execute("SELECT * FROM usersdata WHERE email = %s", (email,))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({"message": "⚠ Email already exists!"}), 409
+
+        # Insert user
+        cursor.execute(
+            "INSERT INTO users (name, email, phone, password_hash, role, status) VALUES (%s,%s,%s,%s,%s,%s)",
+            (name, email, phone, password_hash, role, status)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return jsonify({"message": f"✅ User '{name}' added successfully!"}), 201
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"message": "❌ Error adding user", "error": str(e)}), 500
+
+
+# -------------------------------
+# Update a user
+# -------------------------------
+@app.route("/update-user/<int:id>", methods=["PUT"])
+def update_user(id):
+    try:
+        data = request.json
+        name = data.get("name")
+        email = data.get("email")
+        phone = data.get("phone")
+        role = data.get("role")
+        status = data.get("status")
+        password = data.get("password")  # optional
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        if password:
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            cursor.execute(
+                "UPDATE users SET name=%s, email=%s, phone=%s, role=%s, status=%s, password_hash=%s WHERE id=%s",
+                (name, email, phone, role, status, password_hash, id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET name=%s, email=%s, phone=%s, role=%s, status=%s WHERE id=%s",
+                (name, email, phone, role, status, id)
+            )
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({"message": f"✅ User '{name}' updated successfully!"}), 200
+
+    except Exception as e:
+        print("❌ Error updating user:", e)
+        return jsonify({"message": "❌ Error updating user", "error": str(e)}), 500
+
+
+# -------------------------------
+# Delete a user
+# -------------------------------
+@app.route("/delete-user/<int:id>", methods=["DELETE"])
+def delete_user(id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM users WHERE id=%s", (id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({"message": "🗑 User deleted successfully!"}), 200
+    except Exception as e:
+        print("❌ Error deleting user:", e)
+        return jsonify({"message": "❌ Error deleting user", "error": str(e)}), 500
+
 
 
 # -------------------------------------
@@ -520,6 +768,7 @@ if __name__ == '__main__':
     # Import AI routes after env loading (to avoid circular import issues)
     from controllers.ai_chat_controller import register_ai_routes
     ensure_admin_exists()
+    ensure_user_status_defaults()
     # Register AI assistant routes without altering existing endpoints
     register_ai_routes(app)
     app.run(debug=True)

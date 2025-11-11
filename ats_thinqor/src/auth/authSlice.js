@@ -177,6 +177,30 @@ export const fetchClients = createAsyncThunk(
   }
 );
 
+export const updateClient = createAsyncThunk(
+  "clients/updateClient",
+  async ({ id, clientData }, { rejectWithValue }) => {
+    try {
+      const response = await axios.put(`${API_URL}/update-client/${id}, clientData`);
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || "Failed to update client");
+    }
+  }
+);
+
+export const deleteClient = createAsyncThunk(
+  "clients/deleteClient",
+  async (id, { rejectWithValue }) => {
+    try {
+      const response = await axios.delete(`${API_URL}/delete-client/${id}`);
+      return { id, message: response.data.message };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || "Failed to delete client");
+    }
+  }
+);
+
 // ------------------------------------------------------------------
 // FETCH CANDIDATES
 // ------------------------------------------------------------------
@@ -263,6 +287,64 @@ export const deleteCandidate = createAsyncThunk(
   }
 );
 
+// -------------------- USERS CRUD --------------------
+// FETCH ALL USERS
+export const fetchUsers = createAsyncThunk(
+  "auth/fetchUsers",
+  async (_, { rejectWithValue }) => {
+    try {
+      const res = await axios.get(`${API_URL}/get-users`);
+      return res.data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || "Failed to fetch users");
+    }
+  }
+);
+
+// ADD USER
+export const addUser = createAsyncThunk(
+  "auth/addUser",
+  async (userData, { rejectWithValue }) => {
+    try {
+      // Backend endpoint available is create-user
+      const res = await axios.post(`${API_URL}/create-user`, userData, {
+        headers: { "Content-Type": "application/json" },
+      });
+      return res.data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || "Failed to add user");
+    }
+  }
+);
+
+// UPDATE USER
+export const updateUser = createAsyncThunk(
+  "auth/updateUser",
+  async ({ id, ...userData }, { rejectWithValue }) => {
+    try {
+      const res = await axios.put(`${API_URL}/update-user/${id}`, userData, {
+        headers: { "Content-Type": "application/json" },
+      });
+      return res.data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || "Failed to update user");
+    }
+  }
+);
+
+// DELETE USER
+export const deleteUser = createAsyncThunk(
+  "auth/deleteUser",
+  async (id, { rejectWithValue }) => {
+    try {
+      const res = await axios.delete(`${API_URL}/delete-user/${id}`);
+      return { id, message: res.data.message };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || "Failed to delete user");
+    }
+  }
+);
+
 
 // ------------------------------------------------------------------
 // INITIAL STATE
@@ -276,6 +358,7 @@ const initialState = {
   loading: false,
   error: null,
   successMessage: null,
+  usersList: [],
 };
 
 // ------------------------------------------------------------------
@@ -375,6 +458,13 @@ const authSlice = createSlice({
     s.loading = false;
     s.error = a.payload;
     })
+    .addCase(updateClient.pending, (s) => { s.loading = true; })
+      .addCase(updateClient.fulfilled, (s, a) => { s.loading = false; s.clients = s.clients.map(c => c.id === a.payload.id ? a.payload : c); s.successMessage = "Client updated!"; })
+      .addCase(updateClient.rejected, (s, a) => { s.loading = false; s.error = a.payload; })
+
+      .addCase(deleteClient.pending, (s) => { s.loading = true; })
+      .addCase(deleteClient.fulfilled, (s, a) => { s.loading = false; s.clients = s.clients.filter(c => c.id !== a.payload.id); s.successMessage = a.payload.message || "Client deleted!"; })
+      .addCase(deleteClient.rejected, (s, a) => { s.loading = false; s.error = a.payload; })
     .addCase(createRequirement.pending, (s) => { s.loading = true; })
     .addCase(createRequirement.fulfilled, (s) => { s.loading = false; s.successMessage = "Requirement created"; })
     .addCase(createRequirement.rejected, (s, a) => { s.loading = false; s.error = a.payload; })
@@ -387,6 +477,35 @@ const authSlice = createSlice({
     .addCase(assignRequirement.fulfilled, (s) => { s.loading = false; s.successMessage = "Requirement assigned"; })
     .addCase(assignRequirement.rejected, (s, a) => { s.loading = false; s.error = a.payload; })
 
+    // ---------- USERS LIST ----------
+    .addCase(fetchUsers.pending, (state) => { state.loading = true; state.error = null; })
+    .addCase(fetchUsers.fulfilled, (state, action) => { state.loading = false; state.usersList = action.payload; })
+    .addCase(fetchUsers.rejected, (state, action) => { state.loading = false; state.error = action.payload; })
+
+    // ADD USER
+    .addCase(addUser.pending, (state) => { state.loading = true; state.error = null; })
+    .addCase(addUser.fulfilled, (state, action) => { state.loading = false; state.successMessage = action.payload.message; })
+    .addCase(addUser.rejected, (state, action) => { state.loading = false; state.error = action.payload; })
+
+    // UPDATE USER
+    .addCase(updateUser.pending, (state) => { state.loading = true; state.error = null; })
+    .addCase(updateUser.fulfilled, (state, action) => {
+      state.loading = false;
+      state.successMessage = action.payload.message;
+      state.usersList = state.usersList.map(u =>
+        u.id === action.payload.id ? { ...u, ...action.payload } : u
+      );
+    })
+    .addCase(updateUser.rejected, (state, action) => { state.loading = false; state.error = action.payload; })
+
+    // DELETE USER
+    .addCase(deleteUser.pending, (state) => { state.loading = true; state.error = null; })
+    .addCase(deleteUser.fulfilled, (state, action) => {
+      state.loading = false;
+      state.usersList = state.usersList.filter(u => u.id !== action.payload.id);
+      state.successMessage = action.payload.message;
+    })
+    .addCase(deleteUser.rejected, (state, action) => { state.loading = false; state.error = action.payload; })
     // FETCH CANDIDATES
     .addCase(fetchCandidates.pending, (s) => { s.loading = true; s.error = null; })
     .addCase(fetchCandidates.fulfilled, (s, a) => {

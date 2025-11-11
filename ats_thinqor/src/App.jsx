@@ -11,6 +11,7 @@ import Requirements from "./components/Requirements";
 import Clients from "./components/Clients";
 import CandidateApplicationUI from "./components/Candidates";
 import FloatingAiChat from "./components/FloatingAiChat";
+import Users from "./components/users";
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/requirements" element={<Requirements />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/candidates" element={<CandidateApplicationUI />} />
+        <Route path="/users" element={<Users />} />
 
 
 

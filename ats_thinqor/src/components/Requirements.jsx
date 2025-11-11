@@ -51,7 +51,7 @@ export default function Requirements() {
           <option value="">All Clients</option>
           {clients?.map((client) => (
             <option key={client.id} value={client.id}>
-              {client.client_name}
+              {client.name}
             </option>
           ))}
         </select>
@@ -67,7 +67,7 @@ export default function Requirements() {
       {/* Empty */}
       {!loading && filteredRequirements?.length === 0 && (
         <div className="text-center text-gray-600 py-10">
-          ⚠️ No requirements found.
+          ⚠ No requirements found.
         </div>
       )}
 
@@ -94,7 +94,7 @@ export default function Requirements() {
                   <td className="px-4 py-2">{req.experience_required} yrs</td>
                   <td className="px-4 py-2">{req.skills_required}</td>
                   <td className="px-4 py-2">
-                    {clients?.find((c) => c.id === req.client_id)?.client_name || "--"}
+                    {clients?.find((c) => c.id === req.client_id)?.name || "--"}
                   </td>
                   <td className="px-4 py-2">{req.created_by}</td>
                   <td className="px-4 py-2 text-center">
