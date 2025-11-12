@@ -203,19 +203,7 @@ export const deleteClient = createAsyncThunk(
 
 
 // ✅ Create Candidates Table
-export const createCandidatesTable = createAsyncThunk(
-  "auth/createCandidatesTable",
-  async (_, { rejectWithValue }) => {
-    try {
-      const response = await axios.get(`${API_URL}/create-candidates-table`);
-      return response.data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to create candidates table"
-      );
-    }
-  }
-);
+
 
 // ------------------------------------------------------------------
 // FETCH CANDIDATES
@@ -543,15 +531,7 @@ const authSlice = createSlice({
       s.loading = false;
       s.error = a.payload;
     })
-//CREATE CANDIDATES TABLE
-    .addCase(createCandidatesTable.fulfilled, (state, action) => {
-      state.successMessage = action.payload.message;
-      state.error = null;
-    })
-    .addCase(createCandidatesTable.rejected, (state, action) => {
-      state.error = action.payload;
-      state.successMessage = null;
-    })
+
     // UPDATE CANDIDATE
     .addCase(updateCandidate.pending, (s) => { s.loading = true; s.error = null; })
     .addCase(updateCandidate.fulfilled, (s, a) => {

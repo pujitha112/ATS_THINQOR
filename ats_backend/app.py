@@ -193,43 +193,25 @@ def submit_candidate():
 def get_candidates():
     try:
         conn = get_db_connection()
-        if not conn:
-            return jsonify({"message": "Database connection failed"}), 500
-
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM candidates ORDER BY id DESC")
-        candidates = cursor.fetchall()
 
-        cursor.close()
-        conn.close()
+        # ✅ Ensure correct database
+        cursor.execute("SELECT DATABASE()")
+        db_row = cursor.fetchone()
+        print("🟢 Current DB check:", db_row)
 
-        return jsonify(candidates), 200
-    except Exception as e:
-        print(e)
-        return jsonify({"message": str(e)}), 500
+        db_name = db_row.get("DATABASE()") if db_row else None
+        if not db_name or db_name.lower() != "ats_system":
+            print("⚠ Switching to ats_system database...")
+            cursor.execute("USE ats_system")
+            conn.commit()
 
-
-# --------------------------------------------------------
-
-# Create users table if it doesn't exist
-
-# --------------------------------------------------------
-
-@app.route("/create-candidates-table", methods=["GET"])
-def create_candidates_table():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Check if the 'candidates' table exists
+        # ✅ Create table if missing
         cursor.execute("SHOW TABLES LIKE 'candidates'")
-        result = cursor.fetchone()
-
-        if result:
-            message = "✅ Table 'candidates' already exists."
-        else:
+        if not cursor.fetchone():
+            print("⚠ 'candidates' table not found — creating now...")
             cursor.execute("""
-                CREATE TABLE candidates (
+                CREATE TABLE IF NOT EXISTS candidates (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
                     email VARCHAR(100) NOT NULL,
@@ -242,15 +224,27 @@ def create_candidates_table():
                 )
             """)
             conn.commit()
-            message = "✅ Table 'candidates' created successfully."
+            print("✅ 'candidates' table created successfully!")
+
+        # ✅ Fetch candidates
+        cursor.execute("SELECT * FROM candidates ORDER BY id DESC")
+        rows = cursor.fetchall()
+        print(f"✅ Found {len(rows)} candidates")
 
         cursor.close()
         conn.close()
-        return jsonify({"message": message}), 200
+        return jsonify(rows), 200
 
     except Exception as e:
-        print("❌ Error creating candidates table:", e)
+        import traceback
+        traceback.print_exc()
+        print("❌ Error fetching candidates:", e)
         return jsonify({"message": str(e)}), 500
+# --------------------------------------------------------
+
+# Create users table if it doesn't exist
+
+# --------------------------------------------------------
 
 @app.route("/update-candidate/<int:id>", methods=["PUT"])
 def update_candidate(id):
