@@ -202,7 +202,19 @@ export const deleteClient = createAsyncThunk(
 );
 
 
-// ✅ Create Candidates Table
+// fetchrecruiters
+export const fetchRecruiters = createAsyncThunk(
+  "auth/fetchRecruiters",
+  async (_, { rejectWithValue }) => {
+    try {
+      const res = await axios.get(`${API_URL}/get-recruiters`);
+      return res.data;
+    } catch (err) {
+      return rejectWithValue("Failed to fetch recruiters");
+    }
+  }
+);
+
 
 
 // ------------------------------------------------------------------
@@ -362,7 +374,7 @@ const initialState = {
   loading: false,
   error: null,
   successMessage: null,
-  usersList: [],
+  recruiters: [],
 };
 
 // ------------------------------------------------------------------
@@ -542,7 +554,13 @@ const authSlice = createSlice({
       s.loading = false;
       s.error = a.payload;
     })
-
+    .addCase(fetchRecruiters.fulfilled, (state, action) => {
+    state.recruiters = action.payload;
+    })
+  .addCase(fetchRecruiters.rejected, (state, action) => {
+    state.loading = false;
+    state.error = action.payload;
+  })
     // DELETE CANDIDATE
     .addCase(deleteCandidate.pending, (s) => { s.loading = true; s.error = null; })
     .addCase(deleteCandidate.fulfilled, (s, a) => {

@@ -5,8 +5,11 @@ from flask_cors import CORS
 import uuid
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from werkzeug.utils import secure_filename
+from utils.event_notifier import notify_event
+from utils.auth import get_current_user
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -256,6 +259,7 @@ def update_candidate(id):
         education = request.form.get("education")
         experience = request.form.get("experience")
         resume = request.files.get("resume")
+        new_status = request.form.get("status")
 
         conn = get_db_connection()
         if not conn:
@@ -278,6 +282,16 @@ def update_candidate(id):
                 WHERE id=%s
             """, (name, email, phone, skills, education, experience, id))
 
+        # Get current user for notification (only if status is being updated)
+        if new_status:
+            current_user = get_current_user()
+            notify_event("candidate_status_change", {
+                "candidate_id": id,
+                "status": new_status,
+                "user": current_user.get("name", "Unknown"),
+                "candidate_name": name,
+                "candidate_email": email
+            })
         conn.commit()
         cursor.close()
         conn.close()
@@ -495,6 +509,80 @@ def update_user_status(user_id: int):
     except Exception as e:
         return jsonify({"message": "❌ Error updating user status", "error": str(e)}), 500
     
+#fix allocations schema
+def fix_requirement_allocations_schema():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 1️⃣ Drop all existing FKs (if they exist)
+        cursor.execute("""
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_NAME = 'requirement_allocations'
+              AND CONSTRAINT_SCHEMA = DATABASE()
+              AND CONSTRAINT_NAME LIKE 'fk_%';
+        """)
+        fks = cursor.fetchall()
+        for (fk,) in fks:
+            cursor.execute(f"ALTER TABLE requirement_allocations DROP FOREIGN KEY {fk};")
+
+        # 2️⃣ Alter column types to match referenced tables
+        cursor.execute("""
+            ALTER TABLE requirement_allocations
+            MODIFY COLUMN requirement_id VARCHAR(50),
+            MODIFY COLUMN recruiter_id INT,
+            MODIFY COLUMN assigned_by INT;
+        """)
+
+        # 3️⃣ Add correct FKs
+        cursor.execute("""
+            ALTER TABLE requirement_allocations
+            ADD CONSTRAINT fk_requirement
+              FOREIGN KEY (requirement_id)
+              REFERENCES requirements(id)
+              ON DELETE CASCADE ON UPDATE CASCADE,
+            ADD CONSTRAINT fk_recruiter
+              FOREIGN KEY (recruiter_id)
+              REFERENCES users(id)
+              ON DELETE CASCADE ON UPDATE CASCADE,
+            ADD CONSTRAINT fk_assigned_by
+              FOREIGN KEY (assigned_by)
+              REFERENCES users(id)
+              ON DELETE SET NULL ON UPDATE CASCADE;
+        """)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, "✅ requirement_allocations schema fixed successfully!"
+
+    except Error as e:
+        return False, f"❌ Database error: {str(e)}"
+
+
+@app.route("/fix-requirement-allocations-schema", methods=["GET"])
+def fix_schema_route():
+    success, message = fix_requirement_allocations_schema()
+    status = 200 if success else 500
+    return jsonify({"message": message}), status
+
+# -----------------------------
+#  Get All Recruiters (for dropdown)
+# -----------------------------
+@app.route("/get-recruiters", methods=["GET"])
+def get_recruiters():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id, name FROM users WHERE role = 'RECRUITER'")
+        data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return jsonify(data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
     
 @app.route("/requirements", methods=["POST"])
 def create_requirement():
@@ -579,10 +667,46 @@ def create_requirement():
             created_by_value
         ))
 
+        
+
+
         conn.commit()
         cursor.close()
         conn.close()
 
+        # Get current user for notification
+        user = get_current_user()
+        # Get client name for better email context
+        client_name = "Unknown Client"
+        if client_id_value:
+            try:
+                conn2 = get_db_connection()
+                if conn2:
+                    cursor2 = conn2.cursor(dictionary=True)
+                    cursor2.execute("SELECT name FROM clients WHERE id = %s", (client_id_value,))
+                    client_row = cursor2.fetchone()
+                    if client_row:
+                        client_name = client_row.get("name", "Unknown Client")
+                    cursor2.close()
+                    conn2.close()
+            except Exception:
+                pass
+        
+        notify_event("new_requirement_created", {
+            "id": req_id,
+            "title": title_value,
+            "description": description_value[:100] + "..." if len(description_value) > 100 else description_value,  # First 100 chars
+            "location": location_value,
+            "client_id": client_id_value,
+            "client_name": client_name,
+            "skills_required": skills_value,
+            "experience_required": experience_value,
+            "ctc_range": ctc_range_value,
+            "created_by": user.get("name", "Unknown"),
+            "created_by_id": user.get("id"),
+            "created_by_role": user.get("role", "UNKNOWN"),
+            "created_at": str(datetime.now())
+        })
         return jsonify({"message": "Requirement created", "id": req_id}), 201
 
     except Exception as e:
@@ -593,29 +717,110 @@ def create_requirement():
 def assign_requirement():
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON body"}), 400
+
+        requirement_id = data.get("requirement_id")
+        recruiter_id = data.get("recruiter_id")
+        assigned_by = data.get("assigned_by")
+
+        if not all([requirement_id, recruiter_id, assigned_by]):
+            return jsonify({"error": "Missing required fields"}), 400
+
         alloc_id = str(uuid.uuid4())
 
         conn = get_db_connection()
         cursor = conn.cursor()
 
+        # Ensure table exists with required columns
         cursor.execute("""
-            INSERT INTO requirement_allocations (id, requirement_id, recruiter_id, assigned_by)
-            VALUES (%s, %s, %s, %s)
-        """, (
-            alloc_id,
-            data.get("requirement_id"),
-            data.get("recruiter_id"),
-            data.get("assigned_by")
-        ))
+            CREATE TABLE IF NOT EXISTS requirement_allocations (
+                id VARCHAR(64) PRIMARY KEY,
+                requirement_id VARCHAR(64) NOT NULL,
+                recruiter_id INT NOT NULL,
+                assigned_by INT NOT NULL,
+                status VARCHAR(20) DEFAULT 'ASSIGNED',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        # Add status column if missing (legacy tables)
+        cursor.execute("SHOW COLUMNS FROM requirement_allocations LIKE 'status'")
+        if cursor.fetchone() is None:
+            cursor.execute("ALTER TABLE requirement_allocations ADD COLUMN status VARCHAR(20) DEFAULT 'ASSIGNED'")
+            conn.commit()
+
+        # Add created_at column if missing
+        cursor.execute("SHOW COLUMNS FROM requirement_allocations LIKE 'created_at'")
+        if cursor.fetchone() is None:
+            cursor.execute("ALTER TABLE requirement_allocations ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            conn.commit()
+
+        # Validate recruiter
+        cursor.execute("SELECT COUNT(*) FROM users WHERE id = %s", (recruiter_id,))
+        if cursor.fetchone()[0] == 0:
+            return jsonify({"error": "Recruiter not found"}), 400
+
+        # Validate assigned_by
+        cursor.execute("SELECT COUNT(*) FROM users WHERE id = %s", (assigned_by,))
+        if cursor.fetchone()[0] == 0:
+            return jsonify({"error": "Assigned by user not found"}), 400
+
+        # Validate requirement
+        cursor.execute("SELECT COUNT(*) FROM requirements WHERE id = %s", (requirement_id,))
+        if cursor.fetchone()[0] == 0:
+            return jsonify({"error": "Requirement not found"}), 400
+
+        # Insert allocation
+        cursor.execute("""
+            INSERT INTO requirement_allocations (id, requirement_id, recruiter_id, assigned_by, status)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (alloc_id, requirement_id, recruiter_id, assigned_by, data.get("status", "ASSIGNED")))
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        return jsonify({"message": "Requirement Assigned"}), 201
+        return jsonify({
+            "message": "Requirement assigned successfully",
+            "allocation_id": alloc_id
+        }), 201
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/requirements/<string:req_id>/allocations", methods=["GET"])
+def get_requirement_allocations(req_id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT 
+                ra.id,
+                ra.requirement_id,
+                ra.recruiter_id,
+                ra.assigned_by,
+                ra.created_at,
+                ra.status,
+                recruiter.name AS recruiter_name,
+                assigner.name AS assigned_by_name,
+                req.title AS requirement_title
+            FROM requirement_allocations ra
+            LEFT JOIN users recruiter ON recruiter.id = ra.recruiter_id
+            LEFT JOIN users assigner ON assigner.id = ra.assigned_by
+            LEFT JOIN requirements req ON req.id = ra.requirement_id
+            WHERE ra.requirement_id = %s
+            ORDER BY ra.created_at DESC
+        """, (req_id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return jsonify(rows), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/get-requirements", methods=["GET"])
 def get_requirements():
