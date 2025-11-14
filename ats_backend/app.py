@@ -979,16 +979,33 @@ def update_client(id):
 
 
 # ---------------- DELETE CLIENT ----------------
-@app.route("/delete-client/<int:id>", methods=["DELETE"])
+@app.route('/delete-client/<int:id>', methods=['DELETE'])
 def delete_client(id):
     conn = get_db_connection()
     cursor = conn.cursor()
+
     try:
-        cursor.execute("DELETE FROM clients WHERE id=%s", (id,))
+        # 1️⃣ Check if this client is linked to any requirements
+        cursor.execute("SELECT COUNT(*) FROM requirements WHERE client_id = %s", (id,))
+        req_count = cursor.fetchone()[0]
+
+        if req_count > 0:
+            return jsonify({
+                "message": "Client cannot be deleted because it is used in one or more requirements."
+            }), 400
+
+        # 2️⃣ Safe to delete client
+        cursor.execute("DELETE FROM clients WHERE id = %s", (id,))
         conn.commit()
-        return jsonify({"id": id, "message": "Client deleted successfully"}), 200
+
+        return jsonify({
+            "id": id,
+            "message": "Client deleted successfully!"
+        }), 200
+
     except Error as e:
         return jsonify({"message": str(e)}), 500
+
     finally:
         cursor.close()
         conn.close()
