@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchRequirements, fetchClients } from "../auth/authSlice";
 import { useNavigate } from "react-router-dom";
@@ -127,6 +127,8 @@ export default function Requirements() {
       setSelectedReq(null);
 
       alert("Recruiter assigned successfully!");
+
+      refreshAllData();
     } catch (err) {
       console.error("Assign error:", err);
       alert("Server error");
@@ -161,11 +163,28 @@ export default function Requirements() {
       );
 
       alert("Requirement deleted!");
+
+      refreshAllData();
     } catch (err) {
       console.error("Delete error:", err);
       alert("Server error");
     }
   };
+
+  const refreshAllData = useCallback(async () => {
+    try {
+      const action = await dispatch(fetchRequirements());
+      if (fetchRequirements.fulfilled.match(action)) {
+        await fetchAssignedRecruiters(action.payload || []);
+      } else if (requirements?.length) {
+        await fetchAssignedRecruiters(requirements);
+      } else {
+        setAssignedList([]);
+      }
+    } catch (error) {
+      console.error("Refresh error:", error);
+    }
+  }, [dispatch, requirements]);
 
   const filteredRequirements = selectedClient
     ? requirements.filter((r) => r.client_id === Number(selectedClient))
