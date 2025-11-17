@@ -19,6 +19,7 @@ from services.ai_data_service import (
     list_candidates_for_user,
     list_requirement_allocations,
     list_usersdata,
+    build_user_self_context,
 )
 
 
@@ -34,6 +35,8 @@ SYSTEM_PROMPT = (
 	"- clients: id, name, contact_person, email, phone, address, status, created_at\n"
 	"- users: id, name, email, phone, role, status, created_at\n"
 	"- usersdata: id, name, email, phone, role, status, created_at\n"
+	"If the context contains self_profile, self_assignments, self_candidates, or self_org_stats, use them to answer "
+	"questions about the logged-in user directly (e.g., “what are my assignments?”, “what’s my phone number?”). "
 	"Role rules: admin and delivery manager can access everything including candidates and allocations; "
 	"recruiters only see requirements allocated to them; clients only see requirements where client_id matches their id. "
 	"Never invent data. If a record or access is missing, say so directly and offer available related information."
@@ -74,6 +77,9 @@ def chat() -> Any:
 	intent = _detect_intent(message)
 
 	context: Dict[str, Any] = {"user": {"id": user.get("id"), "role": user.get("role"), "client_id": user.get("client_id")}, "query": message}
+	self_context = build_user_self_context(user)
+	if self_context:
+		context.update(self_context)
 
 	try:
 		# 3) Fetch ATS data with role-based filtering

@@ -444,6 +444,128 @@ def get_users():
     except Exception as e:
         return jsonify({"message": "❌ Error fetching users", "error": str(e)}), 500
 
+
+@app.route('/users/<int:user_id>/details', methods=['GET'])
+def get_user_details(user_id):
+    """
+    Provide a consolidated view of a user's profile, assigned requirements, and owned candidates.
+    This endpoint is intentionally unrestricted so any authorized frontend feature (admin portal, recruiter dashboard,
+    AI assistant, etc.) can fetch rich context for a specific user id.
+    """
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+
+        cursor = conn.cursor(dictionary=True)
+
+        # ------------------------------------------------
+        # 1️⃣ Base user profile (merge users + usersdata fallbacks)
+        # ------------------------------------------------
+        cursor.execute("""
+            SELECT
+                u.id,
+                u.name,
+                u.email,
+                COALESCE(u.phone, ud.phone) AS phone,
+                u.role,
+                COALESCE(u.status, ud.status, 'ACTIVE') AS status,
+                u.created_at
+            FROM users u
+            LEFT JOIN usersdata ud ON ud.email = u.email
+            WHERE u.id = %s
+        """, (user_id,))
+
+        user_row = cursor.fetchone()
+        if not user_row:
+            cursor.close()
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
+
+        # ------------------------------------------------
+        # 2️⃣ Requirements assigned to the user (if recruiter)
+        # ------------------------------------------------
+        cursor.execute("""
+            SELECT
+                ra.id AS allocation_id,
+                ra.requirement_id,
+                ra.status AS allocation_status,
+                ra.created_at AS assigned_date,
+                req.title,
+                req.description,
+                req.location,
+                req.skills_required,
+                req.experience_required,
+                req.status AS requirement_status,
+                client.name AS client_name,
+                assigner.name AS assigned_by
+            FROM requirement_allocations ra
+            JOIN requirements req ON req.id = ra.requirement_id
+            LEFT JOIN clients client ON client.id = req.client_id
+            LEFT JOIN users assigner ON assigner.id = ra.assigned_by
+            WHERE ra.recruiter_id = %s
+            ORDER BY ra.created_at DESC
+        """, (user_id,))
+        assigned_requirements = cursor.fetchall()
+
+        # ------------------------------------------------
+        # 3️⃣ Candidates created by the user
+        # ------------------------------------------------
+        cursor.execute("""
+            SELECT
+                id,
+                name,
+                email,
+                phone,
+                skills,
+                education,
+                experience,
+                resume_filename,
+                created_at
+            FROM candidates
+            WHERE created_by = %s
+            ORDER BY created_at DESC
+        """, (user_id,))
+        created_candidates = cursor.fetchall()
+
+        response_payload = {
+            "user": user_row,
+            "assigned_requirements": assigned_requirements,
+            "assigned_requirement_count": len(assigned_requirements),
+            "created_candidates": created_candidates,
+            "created_candidate_count": len(created_candidates),
+        }
+
+        # ------------------------------------------------
+        # 4️⃣ Organization-wide stats for elevated roles
+        # ------------------------------------------------
+        if user_row["role"] in ("ADMIN", "DELIVERY_MANAGER"):
+            org_stats = {}
+
+            cursor.execute("SELECT COUNT(*) AS total_requirements FROM requirements")
+            org_stats["total_requirements"] = cursor.fetchone().get("total_requirements", 0)
+
+            cursor.execute("SELECT COUNT(*) AS open_requirements FROM requirements WHERE status = 'OPEN'")
+            org_stats["open_requirements"] = cursor.fetchone().get("open_requirements", 0)
+
+            cursor.execute("SELECT COUNT(*) AS total_candidates FROM candidates")
+            org_stats["total_candidates"] = cursor.fetchone().get("total_candidates", 0)
+
+            cursor.execute("SELECT COUNT(*) AS total_users FROM users")
+            org_stats["total_users"] = cursor.fetchone().get("total_users", 0)
+
+            cursor.execute("SELECT COUNT(*) AS total_clients FROM clients")
+            org_stats["total_clients"] = cursor.fetchone().get("total_clients", 0)
+
+            response_payload["org_stats"] = org_stats
+
+        cursor.close()
+        conn.close()
+        return jsonify(response_payload), 200
+    except Exception as e:
+        print("❌ Error building user details:", e)
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/login', methods=['POST'])
 def login():
     try:

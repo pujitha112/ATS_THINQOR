@@ -8,8 +8,9 @@ export default function RecruiterDashboard() {
 
   const [requirements, setRequirements] = useState([]);
   const [candidates, setCandidates] = useState([]);
-  const [loadingAssignments, setLoadingAssignments] = useState(false);
-  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
 
   // ---------------------------
   // ROLE-BASED PROTECTION
@@ -26,8 +27,7 @@ export default function RecruiterDashboard() {
   // ---------------------------
   useEffect(() => {
     if (user?.id) {
-      loadRequirements();
-      loadCandidates();
+      loadUserSummary();
     }
   }, [user]);
 
@@ -38,46 +38,41 @@ export default function RecruiterDashboard() {
     });
   };
 
-  const loadRequirements = async () => {
+  const loadUserSummary = async () => {
+    if (!user?.id) return;
+
     try {
-      setLoadingAssignments(true);
+      setSummaryError("");
+      setLoadingSummary(true);
+
       const res = await fetch(
-        `http://localhost:5000/recruiter/${user.id}/requirements`
+        `http://localhost:5000/users/${user.id}/details`
       );
       const data = await res.json();
-      if (Array.isArray(data)) {
-        setRequirements(data);
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load user details");
+      }
+
+      setSummary(data);
+      if (Array.isArray(data.assigned_requirements)) {
+        setRequirements(data.assigned_requirements);
       } else {
         setRequirements([]);
       }
-    } catch (err) {
-      console.error("Error loading requirements:", err);
-      setRequirements([]);
-    } finally {
-      setLoadingAssignments(false);
-    }
-  };
 
-  const loadCandidates = async () => {
-    try {
-      setLoadingCandidates(true);
-      // Pass user info to filter candidates by role
-      const params = new URLSearchParams({
-        user_id: user?.id || "",
-        user_role: user?.role || "",
-      });
-      const res = await fetch(`http://localhost:5000/get-candidates?${params.toString()}`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setCandidates(data);
+      if (Array.isArray(data.created_candidates)) {
+        setCandidates(data.created_candidates);
       } else {
         setCandidates([]);
       }
     } catch (err) {
-      console.error("Error loading candidates:", err);
+      console.error("Summary load error:", err);
+      setSummaryError(err.message || "Unable to load your details right now.");
+      setRequirements([]);
       setCandidates([]);
     } finally {
-      setLoadingCandidates(false);
+      setLoadingSummary(false);
     }
   };
 
@@ -92,6 +87,11 @@ export default function RecruiterDashboard() {
     []
   );
 
+  const assignmentCount =
+    summary?.assigned_requirement_count ?? requirements.length;
+  const candidateCount =
+    summary?.created_candidate_count ?? candidates.length;
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
@@ -100,7 +100,7 @@ export default function RecruiterDashboard() {
         </h2>
         <div className="flex gap-3 flex-wrap">
           <button
-            onClick={loadRequirements}
+            onClick={loadUserSummary}
             className="px-4 py-2 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-50 transition"
           >
             Refresh Assignments
@@ -114,10 +114,40 @@ export default function RecruiterDashboard() {
         </div>
       </div>
 
+      {summaryError && (
+        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {summaryError}
+        </div>
+      )}
+
+      {summary?.user && (
+        <div className="bg-white p-5 rounded-lg shadow mb-6">
+          <h3 className="text-xl font-bold text-gray-700 mb-4">My Profile</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <ProfileField label="Name" value={summary.user.name} />
+            <ProfileField label="Email" value={summary.user.email} />
+            <ProfileField label="Phone" value={summary.user.phone} />
+            <ProfileField
+              label="Role"
+              value={summary.user.role?.replace("_", " ")}
+            />
+            <ProfileField label="Status" value={summary.user.status} />
+            <ProfileField
+              label="Joined"
+              value={
+                summary.user.created_at
+                  ? new Date(summary.user.created_at).toLocaleString()
+                  : "--"
+              }
+            />
+          </div>
+        </div>
+      )}
+
       {/* STATS SECTION */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="Assigned Requirements" value={requirements.length} />
-        <StatCard label="Candidates Added" value={candidates.length} />
+        <StatCard label="Assigned Requirements" value={assignmentCount} />
+        <StatCard label="Candidates Added" value={candidateCount} />
         <StatCard label="Interviews Today" value={3} />
         <StatCard label="Offers Released" value={1} />
       </div>
@@ -130,7 +160,7 @@ export default function RecruiterDashboard() {
           Assigned Requirements
         </h3>
 
-        {loadingAssignments ? (
+        {loadingSummary ? (
           <p className="text-gray-500">Loading assignments...</p>
         ) : requirements.length === 0 ? (
           <p className="text-gray-500">No requirements assigned yet.</p>
@@ -191,7 +221,7 @@ export default function RecruiterDashboard() {
           Your Candidates
         </h3>
 
-        {loadingCandidates ? (
+        {loadingSummary ? (
           <p className="text-gray-500">Loading candidates...</p>
         ) : candidates.length === 0 ? (
           <p className="text-gray-500">No candidates added yet.</p>
@@ -232,6 +262,17 @@ function StatCard({ label, value }) {
     <div className="bg-white shadow p-5 rounded-lg text-center">
       <p className="text-gray-500 text-sm">{label}</p>
       <h3 className="text-3xl font-bold text-indigo-600 mt-1">{value}</h3>
+    </div>
+  );
+}
+
+function ProfileField({ label, value }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
+        {label}
+      </p>
+      <p className="text-sm font-medium text-gray-900">{value || "--"}</p>
     </div>
   );
 }
