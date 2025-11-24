@@ -394,17 +394,17 @@ def submit_candidate():
         print("❌ Error:", e)
         return jsonify({"message": "❌ Error submitting candidate", "error": str(e)}), 500
 
-@app.route("/roles", methods=["GET"])
-def roles_endpoint():
-    """
-    Returns JSON: { "roles": ["ADMIN","RECRUITER", ...] }
-    Frontend should call this to populate role dropdowns dynamically.
-    """
-    try:
-        roles = get_allowed_roles()
-        return jsonify({"roles": roles}), 200
-    except Exception as e:
-        return jsonify({"roles": [], "error": str(e)}), 500
+# @app.route("/roles", methods=["GET"])
+# def roles_endpoint():
+#     """
+#     Returns JSON: { "roles": ["ADMIN","RECRUITER", ...] }
+#     Frontend should call this to populate role dropdowns dynamically.
+#     """
+#     try:
+#         roles = get_allowed_roles()
+#         return jsonify({"roles": roles}), 200
+#     except Exception as e:
+#         return jsonify({"roles": [], "error": str(e)}), 500
     
 
 @app.route("/get-candidates", methods=["GET"])
@@ -420,9 +420,9 @@ def get_candidates():
 
         db_name = db_row.get("DATABASE()") if db_row else None
 
-        if not db_name or db_name.lower() != "ats":
+        if not db_name or db_name.lower() != "ats_system":
             print("⚠ Switching to ats database...")
-            cursor.execute("USE ats")
+            cursor.execute("USE ats_system")
             conn.commit()
 
         # 2️⃣ Create table if it doesn't exist
