@@ -164,7 +164,73 @@ def initialize_database():
 """)
 
 
-         # ---------------- CANDIDATE SCREENING ----------------
+        # ---------------------------
+        # REQUIREMENT STAGES (NEW)
+        # ---------------------------
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS requirement_stages (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                requirement_id VARCHAR(50),
+                stage_order INT,
+                stage_name VARCHAR(255),
+                is_mandatory BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (requirement_id) REFERENCES requirements(id)
+            );
+        """)
+
+        # ---------------------------
+        # CANDIDATE PROGRESS (UPDATED)
+        # ---------------------------
+        # Check if table exists to decide on creation or update
+        cursor.execute("SHOW TABLES LIKE 'candidate_progress'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE candidate_progress (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    candidate_id INT,
+                    requirement_id VARCHAR(50),
+                    stage_id BIGINT,
+                    stage_name VARCHAR(255),
+                    status ENUM('PENDING','IN_PROGRESS','COMPLETED','REJECTED') DEFAULT 'PENDING',
+                    decision ENUM('NONE','MOVE_NEXT','HOLD','REJECT') DEFAULT 'NONE',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_progress_stage (candidate_id, requirement_id, stage_id),
+                    FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                    FOREIGN KEY (requirement_id) REFERENCES requirements(id),
+                    FOREIGN KEY (stage_id) REFERENCES requirement_stages(id)
+                );
+            """)
+        else:
+            # Table exists, attempt to add new columns if they don't exist
+            print("⚠️ 'candidate_progress' exists. Checking for schema updates...")
+            
+            cursor.execute("SHOW COLUMNS FROM candidate_progress LIKE 'stage_id'")
+            if not cursor.fetchone():
+                print("   -> Adding 'stage_id' column...")
+                try:
+                    cursor.execute("ALTER TABLE candidate_progress ADD COLUMN stage_id BIGINT")
+                    cursor.execute("ALTER TABLE candidate_progress ADD CONSTRAINT fk_cp_stage FOREIGN KEY (stage_id) REFERENCES requirement_stages(id)")
+                except Exception as e:
+                    print(f"   ❌ Error adding stage_id: {e}")
+
+            cursor.execute("SHOW COLUMNS FROM candidate_progress LIKE 'stage_name'")
+            if not cursor.fetchone():
+                print("   -> Adding 'stage_name' column...")
+                try:
+                    cursor.execute("ALTER TABLE candidate_progress ADD COLUMN stage_name VARCHAR(255)")
+                except Exception as e:
+                    print(f"   ❌ Error adding stage_name: {e}")
+
+            cursor.execute("SHOW COLUMNS FROM candidate_progress LIKE 'decision'")
+            if not cursor.fetchone():
+                print("   -> Adding 'decision' column...")
+                try:
+                    cursor.execute("ALTER TABLE candidate_progress ADD COLUMN decision ENUM('NONE','MOVE_NEXT','HOLD','REJECT') DEFAULT 'NONE'")
+                except Exception as e:
+                    print(f"   ❌ Error adding decision: {e}")
+
+        # ---------------- CANDIDATE SCREENING ----------------
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS candidate_screening (
                 id INT AUTO_INCREMENT PRIMARY KEY,
