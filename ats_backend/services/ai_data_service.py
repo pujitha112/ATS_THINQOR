@@ -592,3 +592,151 @@ def build_user_self_context(user: UserDict) -> Dict[str, Any]:
 	return context
 
 
+def get_candidate_progress_for_requirement(requirement_id: str, user: UserDict) -> List[Dict[str, Any]]:
+	"""Get all candidate progress for a specific requirement with stage details."""
+	if not (_is_admin(user) or (user or {}).get("role", "").upper() == "DELIVERY_MANAGER"):
+		return []
+	
+	return _fetch_all(
+		"""
+		SELECT 
+			cp.candidate_id,
+			c.name AS candidate_name,
+			c.email AS candidate_email,
+			cp.stage_id,
+			rs.stage_name,
+			rs.stage_order,
+			cp.status,
+			cp.decision,
+			cp.updated_at
+		FROM candidate_progress cp
+		JOIN candidates c ON c.id = cp.candidate_id
+		JOIN requirement_stages rs ON rs.id = cp.stage_id
+		WHERE cp.requirement_id = %s
+		ORDER BY rs.stage_order ASC, c.name ASC
+		""",
+		(requirement_id,),
+	)
+
+
+def get_candidates_in_last_round(requirement_id: str, user: UserDict) -> List[Dict[str, Any]]:
+	"""Get candidates who are in the last round of a requirement."""
+	if not (_is_admin(user) or (user or {}).get("role", "").upper() == "DELIVERY_MANAGER"):
+		return []
+	
+	return _fetch_all(
+		"""
+		SELECT 
+			c.id,
+			c.name,
+			c.email,
+			cp.status,
+			cp.decision,
+			rs.stage_name,
+			rs.stage_order,
+			r.no_of_rounds
+		FROM candidate_progress cp
+		JOIN candidates c ON c.id = cp.candidate_id
+		JOIN requirement_stages rs ON rs.id = cp.stage_id
+		JOIN requirements r ON r.id = cp.requirement_id
+		WHERE cp.requirement_id = %s 
+		  AND rs.stage_order = r.no_of_rounds
+		ORDER BY c.name ASC
+		""",
+		(requirement_id,),
+	)
+
+
+def get_qualified_candidates(requirement_id: str, user: UserDict) -> List[Dict[str, Any]]:
+	"""Get candidates who completed/qualified the last round."""
+	if not (_is_admin(user) or (user or {}).get("role", "").upper() == "DELIVERY_MANAGER"):
+		return []
+	
+	return _fetch_all(
+		"""
+		SELECT 
+			c.id,
+			c.name,
+			c.email,
+			c.phone,
+			rs.stage_name,
+			cp.updated_at AS qualified_date
+		FROM candidate_progress cp
+		JOIN candidates c ON c.id = cp.candidate_id
+		JOIN requirement_stages rs ON rs.id = cp.stage_id
+		JOIN requirements r ON r.id = cp.requirement_id
+		WHERE cp.requirement_id = %s 
+		  AND rs.stage_order = r.no_of_rounds
+		  AND cp.status = 'COMPLETED'
+		ORDER BY cp.updated_at DESC
+		""",
+		(requirement_id,),
+	)
+
+
+def get_tracking_stats_for_requirement(requirement_id: str, user: UserDict) -> Dict[str, Any]:
+	"""Get tracking statistics for a requirement."""
+	if not (_is_admin(user) or (user or {}).get("role", "").upper() == "DELIVERY_MANAGER"):
+		return {}
+	
+	conn = get_db_connection()
+	if not conn:
+		return {}
+	
+	cursor = conn.cursor(dictionary=True)
+	try:
+		# Get total candidates screened
+		cursor.execute(
+			"SELECT COUNT(DISTINCT candidate_id) AS total FROM candidate_screening WHERE requirement_id = %s",
+			(requirement_id,)
+		)
+		total_screened = cursor.fetchone().get("total", 0)
+		
+		# Get candidates in progress
+		cursor.execute(
+			"""
+			SELECT COUNT(DISTINCT cp.candidate_id) AS total
+			FROM candidate_progress cp
+			WHERE cp.requirement_id = %s AND cp.status IN ('PENDING', 'IN_PROGRESS')
+			""",
+			(requirement_id,)
+		)
+		in_progress = cursor.fetchone().get("total", 0)
+		
+		# Get qualified (completed last round)
+		cursor.execute(
+			"""
+			SELECT COUNT(DISTINCT cp.candidate_id) AS total
+			FROM candidate_progress cp
+			JOIN requirement_stages rs ON rs.id = cp.stage_id
+			JOIN requirements r ON r.id = cp.requirement_id
+			WHERE cp.requirement_id = %s 
+			  AND rs.stage_order = r.no_of_rounds
+			  AND cp.status = 'COMPLETED'
+			""",
+			(requirement_id,)
+		)
+		qualified = cursor.fetchone().get("total", 0)
+		
+		# Get rejected
+		cursor.execute(
+			"""
+			SELECT COUNT(DISTINCT candidate_id) AS total
+			FROM candidate_progress
+			WHERE requirement_id = %s AND status = 'REJECTED'
+			""",
+			(requirement_id,)
+		)
+		rejected = cursor.fetchone().get("total", 0)
+		
+		return {
+			"total_screened": total_screened,
+			"in_progress": in_progress,
+			"qualified": qualified,
+			"rejected": rejected
+		}
+	finally:
+		cursor.close()
+		conn.close()
+
+
