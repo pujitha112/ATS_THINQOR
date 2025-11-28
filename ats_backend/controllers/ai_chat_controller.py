@@ -20,6 +20,10 @@ from services.ai_data_service import (
     list_requirement_allocations,
     list_usersdata,
     build_user_self_context,
+    get_candidate_progress_for_requirement,
+    get_candidates_in_last_round,
+    get_qualified_candidates,
+    get_tracking_stats_for_requirement,
 )
 
 
@@ -29,16 +33,21 @@ ai_bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 SYSTEM_PROMPT = (
 	"You are an ATS assistant. Answer ONLY from the CONTEXT provided. "
 	"The ATS database includes these tables and columns:\n"
-	"- candidates: id, name, email, phone, skills, education, experience, resume_filename, created_at\n"
-	"- requirements: id, client_id, title, description, location, skills_required, experience_required, ctc_range, ecto_range, status, created_at\n"
+	"- candidates: id, name, email, phone, skills, education, experience, ctc, ectc, resume_filename, created_by, created_at\n"
+	"- requirements: id, client_id, title, description, location, skills_required, experience_required, ctc_range, no_of_rounds, status, created_at, created_by\n"
+	"- requirement_stages: id, requirement_id, stage_order, stage_name, is_mandatory (tracks custom stage names like 'Technical Round', 'HR Round' for each requirement)\n"
+	"- candidate_progress: id, candidate_id, requirement_id, stage_id, stage_name, status (PENDING/IN_PROGRESS/COMPLETED/REJECTED), decision (NONE/MOVE_NEXT/HOLD/REJECT), updated_at (tracks which stage each candidate is at)\n"
+	"- candidate_screening: id, candidate_id, requirement_id, ai_score, ai_rationale, recommend, red_flags, status, created_at (AI screening results)\n"
 	"- requirement_allocations: id, requirement_id, recruiter_id, assigned_by, status, created_at\n"
 	"- clients: id, name, contact_person, email, phone, address, status, created_at\n"
 	"- users: id, name, email, phone, role, status, created_at\n"
 	"- usersdata: id, name, email, phone, role, status, created_at\n"
 	"If the context contains self_profile, self_assignments, self_candidates, or self_org_stats, use them to answer "
-	"questions about the logged-in user directly (e.g., “what are my assignments?”, “what’s my phone number?”). "
+	"questions about the logged-in user directly (e.g., 'what are my assignments?', 'what's my phone number?'). "
 	"Role rules: admin and delivery manager can access everything including candidates and allocations; "
 	"recruiters only see requirements allocated to them; clients only see requirements where client_id matches their id. "
+	"For tracking questions (e.g., 'how many candidates in last round?', 'who qualified?'), use candidate_progress to check stage status. "
+	"A candidate is 'qualified' or 'passed' a stage if status=COMPLETED. They are in 'last round' if stage_order equals no_of_rounds. "
 	"Never invent data. If a record or access is missing, say so directly and offer available related information."
 )
 
@@ -90,10 +99,49 @@ def chat() -> Any:
 				if tok.upper().startswith("R-") or tok.upper().startswith("REQ-"):
 					req_id = tok.upper().replace("REQ-", "R-")
 					break
+			
+			# If no explicit ID found, try to match by Title/Client from user's accessible list
+			if not req_id:
+				all_reqs = []
+				role = user.get("role", "").upper()
+				if role == "ADMIN":
+					all_reqs = list_requirements_for_admin()
+				elif role == "RECRUITER":
+					all_reqs = list_requirements_for_recruiter(user.get("id"))
+				elif role == "CLIENT":
+					all_reqs = list_requirements_for_client(user.get("client_id"))
+				
+				msg_lower = message.lower()
+				best_match = None
+				
+				for r in all_reqs:
+					title = (r.get("title") or "").lower()
+					client = (r.get("client_name") or "").lower()
+					
+					score = 0
+					if title and title in msg_lower:
+						score += 2
+					if client and client in msg_lower:
+						score += 3
+					
+					if score > 0:
+						if best_match is None or score > best_match[1]:
+							best_match = (r["id"], score)
+				
+				if best_match:
+					req_id = best_match[0]
+
 			# if explicit id present fetch exact, else leave None and let LLM summarize available lists
 			context["requirement"] = get_requirement_by_id_for_user(req_id, user) if req_id else None
 			if req_id:
 				context["allocations"] = get_allocations_for_requirement(req_id)
+				# Add tracking data for the requirement
+				context["candidate_progress"] = get_candidate_progress_for_requirement(req_id, user)
+				context["tracking_stats"] = get_tracking_stats_for_requirement(req_id, user)
+				# Check if asking about last round or qualified candidates
+				if any(k in message.lower() for k in ["last round", "final round", "qualified", "passed", "selected", "completed"]):
+					context["candidates_in_last_round"] = get_candidates_in_last_round(req_id, user)
+					context["qualified_candidates"] = get_qualified_candidates(req_id, user)
 			# For admins, if no specific requirement id, include full list
 			if not req_id and (user.get("role", "").upper() == "ADMIN"):
 				context["requirements"] = list_requirements_for_admin()

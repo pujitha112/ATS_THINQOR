@@ -19,12 +19,11 @@ export default function CreateRequirements() {
     skills_required: "",
     experience_required: "",
     ctc_range: "",
+    no_of_rounds: 1,
   });
 
-  // OPTIONAL auto-data from AI
-  const [autoData, setAutoData] = useState(null);
+  const [stageNames, setStageNames] = useState(["Round 1"]);
 
-  // ---------------- AI AUTOFILL ----------------
   async function handleAutoFill() {
     if (!jdText.trim()) {
       alert("Please enter a job description first");
@@ -49,8 +48,7 @@ export default function CreateRequirements() {
       }
 
       if (data.suggested_requirement) {
-        setAutoData(data.suggested_requirement);
-
+        // Removed ectc mapping
         setForm(prev => ({
           ...prev,
           title: data.suggested_requirement.title || prev.title,
@@ -88,15 +86,34 @@ export default function CreateRequirements() {
 
   // ---------------- FORM HANDLERS ----------------
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setForm({ ...form, [name]: value });
+
+    // Update stage names array when no_of_rounds changes
+    if (name === "no_of_rounds") {
+      const rounds = parseInt(value) || 1;
+      const newStageNames = [];
+      for (let i = 0; i < rounds; i++) {
+        newStageNames.push(stageNames[i] || `Round ${i + 1}`);
+      }
+      setStageNames(newStageNames);
+    }
+  };
+
+  const handleStageNameChange = (index, value) => {
+    const updated = [...stageNames];
+    updated[index] = value;
+    setStageNames(updated);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
 
+    // Include stage names in payload
     const payload = {
       ...form,
-      created_by: user?.id,
+      created_by: user?.role || "",
+      stage_names: stageNames
     };
 
     dispatch(createRequirement(payload))
@@ -112,7 +129,9 @@ export default function CreateRequirements() {
           skills_required: "",
           experience_required: "",
           ctc_range: "",
+          no_of_rounds: 1,
         });
+        setStageNames(["Round 1"]);
       })
       .catch(() => alert("Error creating requirement"));
   };
@@ -179,21 +198,57 @@ export default function CreateRequirements() {
         <input name="experience_required" placeholder="Experience (years)" className="border p-2 rounded"
           value={form.experience_required} onChange={handleChange} />
 
-        <input name="skills_required" placeholder="Skills (comma separated)" className="border p-2 rounded"
-          value={form.skills_required} onChange={handleChange} />
-
-        <input name="ctc_range" placeholder="CTC Range" className="border p-2 rounded"
-          value={form.ctc_range} onChange={handleChange} />
-
-        {/* Description */}
         <textarea
           name="description"
-          placeholder="Job Description"
-          rows={4}
-          className="border p-3 rounded col-span-2"
+          placeholder="Job Description (Optional)"
           value={form.description}
           onChange={handleChange}
+          className="border p-2 rounded col-span-2 h-24"
         />
+
+        <input name="experience_required" placeholder="Experience (years)" value={form.experience_required} onChange={handleChange} className="border p-2 rounded" />
+        <input name="skills_required" placeholder="Skills (comma separated)" value={form.skills_required} onChange={handleChange} className="border p-2 rounded" />
+
+        <input name="ctc_range" placeholder="CTC Range" value={form.ctc_range} onChange={handleChange} className="border p-2 rounded" />
+
+        <input
+          name="no_of_rounds"
+          type="number"
+          min="1"
+          max="10"
+          placeholder="Number of Rounds (Default: 1)"
+          value={form.no_of_rounds || ""}
+          onChange={handleChange}
+          className="border p-2 rounded"
+        />
+
+        {/* Stage Names Section */}
+        {parseInt(form.no_of_rounds) > 0 && (
+          <div className="col-span-2 border-2 border-dashed border-indigo-300 rounded-lg p-4 bg-indigo-50">
+            <h3 className="text-sm font-semibold text-indigo-700 mb-3">
+              📋 Define Stage Names for Tracking
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {stageNames.map((stageName, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-gray-600 w-16">
+                    Stage {index + 1}:
+                  </span>
+                  <input
+                    type="text"
+                    value={stageName}
+                    onChange={(e) => handleStageNameChange(index, e.target.value)}
+                    placeholder={`e.g., Technical Round, HR Round`}
+                    className="flex-1 border p-2 rounded text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              💡 These stage names will be used for candidate tracking
+            </p>
+          </div>
+        )}
 
         <button className="bg-indigo-600 text-white py-2 rounded-lg col-span-2 hover:bg-indigo-700">
           Create Requirement

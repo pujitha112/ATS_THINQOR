@@ -116,13 +116,22 @@ def initialize_database():
                 skills_required VARCHAR(255),
                 experience_required FLOAT,
                 ctc_range VARCHAR(100),
-
+                no_of_rounds INT DEFAULT 1,
                 status VARCHAR(50) DEFAULT 'OPEN',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_by VARCHAR(100),
                 FOREIGN KEY (client_id) REFERENCES clients(id)
             );
         """)
+
+        # Check for no_of_rounds column in requirements
+        cursor.execute("SHOW COLUMNS FROM requirements LIKE 'no_of_rounds'")
+        if not cursor.fetchone():
+            print("⚠️ Adding 'no_of_rounds' column to requirements...")
+            try:
+                cursor.execute("ALTER TABLE requirements ADD COLUMN no_of_rounds INT DEFAULT 1")
+            except Exception as e:
+                print(f"❌ Error adding no_of_rounds: {e}")
 
         # ---------------------------
         # REQUIREMENT_ALLOCATIONS
@@ -229,6 +238,23 @@ def initialize_database():
                     cursor.execute("ALTER TABLE candidate_progress ADD COLUMN decision ENUM('NONE','MOVE_NEXT','HOLD','REJECT') DEFAULT 'NONE'")
                 except Exception as e:
                     print(f"   ❌ Error adding decision: {e}")
+
+            # Fix Unique Key for candidate_progress
+            print("   -> Checking unique key constraints...")
+            try:
+                # Try to drop the old unique key if it exists
+                cursor.execute("ALTER TABLE candidate_progress DROP INDEX uniq_progress")
+                print("   ✅ Dropped old unique key 'uniq_progress'")
+            except Exception:
+                pass # Key might not exist
+
+            try:
+                # Add the correct unique key
+                cursor.execute("ALTER TABLE candidate_progress ADD UNIQUE KEY uniq_progress_stage (candidate_id, requirement_id, stage_id)")
+                print("   ✅ Added unique key 'uniq_progress_stage'")
+            except Exception as e:
+                # print(f"   ℹ️ Unique key 'uniq_progress_stage' might already exist: {e}")
+                pass
 
         # ---------------- CANDIDATE SCREENING ----------------
         cursor.execute("""
@@ -433,13 +459,25 @@ def submit_candidate():
 
         # Insert WITH created_by
         if created_by:
-            cursor.execute("""
-                INSERT INTO candidates
-                (name, email, phone, skills, education, experience, resume_filename,
-                 created_by, ctc, ectc)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (name, email, phone, skills, education, experience,
-                  filename, created_by, ctc, ectc))
+            # Verify if user exists to avoid FK error
+            cursor.execute("SELECT id FROM users WHERE id = %s", (created_by,))
+            if cursor.fetchone():
+                cursor.execute("""
+                    INSERT INTO candidates
+                    (name, email, phone, skills, education, experience, resume_filename,
+                     created_by, ctc, ectc)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (name, email, phone, skills, education, experience,
+                      filename, created_by, ctc, ectc))
+            else:
+                print(f"⚠️ User ID {created_by} not found. Inserting candidate without created_by.")
+                cursor.execute("""
+                    INSERT INTO candidates
+                    (name, email, phone, skills, education, experience, resume_filename,
+                     ctc, ectc)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (name, email, phone, skills, education, experience,
+                      filename, ctc, ectc))
         else:
             # Insert WITHOUT created_by
             cursor.execute("""
@@ -460,18 +498,6 @@ def submit_candidate():
         print("❌ Error:", e)
         return jsonify({"message": "❌ Error submitting candidate", "error": str(e)}), 500
 
-# @app.route("/roles", methods=["GET"])
-# def roles_endpoint():
-#     """
-#     Returns JSON: { "roles": ["ADMIN","RECRUITER", ...] }
-#     Frontend should call this to populate role dropdowns dynamically.
-#     """
-#     try:
-#         roles = get_allowed_roles()
-#         return jsonify({"roles": roles}), 200
-#     except Exception as e:
-#         return jsonify({"roles": [], "error": str(e)}), 500
-    
 
 @app.route("/get-candidates", methods=["GET"])
 def get_candidates():
@@ -1131,9 +1157,15 @@ def create_requirement():
         req_id = str(uuid.uuid4())
 
         # Validate required fields
-        required_fields = ["client_id", "title", "description", "location"]
-        missing = [field for field in required_fields if not (data.get(field) or "").strip()]
+        required_fields = ["client_id", "title", "location"]
+        missing = []
+        for field in required_fields:
+            value = data.get(field)
+            if value is None or str(value).strip() == "":
+                missing.append(field)
+
         if missing:
+            print(f"❌ create_requirement failed: Missing fields {missing}")
             return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
 
         # Normalize client_id
@@ -1141,6 +1173,7 @@ def create_requirement():
         try:
             client_id_value = int(client_id_value)
         except (TypeError, ValueError):
+            print(f"❌ create_requirement failed: Invalid client_id '{client_id_value}'")
             return jsonify({"error": "Invalid client_id"}), 400
 
         # Helpers
@@ -1171,6 +1204,17 @@ def create_requirement():
         ctc_range_value = _sanitize_text(data.get("ctc_range"), 100)
 
         created_by_value = _sanitize_text(data.get("created_by"), 50).upper()
+        
+        # Number of Rounds
+        try:
+            no_of_rounds = int(data.get("no_of_rounds", 1))
+        except:
+            no_of_rounds = 1
+
+        # Custom stage names (if provided)
+        stage_names_list = data.get("stage_names", [])
+        if not isinstance(stage_names_list, list):
+            stage_names_list = []
 
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1178,8 +1222,8 @@ def create_requirement():
         cursor.execute("""
             INSERT INTO requirements
             (id, client_id, title, description, location, skills_required, 
-             experience_required, ctc_range, status, created_by)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',%s)
+             experience_required, ctc_range, no_of_rounds, status, created_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',%s)
         """, (
             req_id,
             client_id_value,
@@ -1189,8 +1233,22 @@ def create_requirement():
             skills_value,
             experience_value,
             ctc_range_value,
+            no_of_rounds,
             created_by_value
         ))
+
+        # Generate Stages with custom names if provided
+        for i in range(1, no_of_rounds + 1):
+            # Use custom name if available, otherwise default to "Round X"
+            if i <= len(stage_names_list) and stage_names_list[i-1].strip():
+                stage_name = stage_names_list[i-1].strip()
+            else:
+                stage_name = f"Round {i}"
+                
+            cursor.execute("""
+                INSERT INTO requirement_stages (requirement_id, stage_order, stage_name, is_mandatory)
+                VALUES (%s, %s, %s, TRUE)
+            """, (req_id, i, stage_name))
 
         conn.commit()
         cursor.close()
@@ -1223,6 +1281,7 @@ def create_requirement():
             "skills_required": skills_value,
             "experience_required": experience_value,
             "ctc_range": ctc_range_value,
+            "no_of_rounds": no_of_rounds,
             "created_by": user.get("name", "Unknown"),
             "created_by_id": user.get("id"),
             "created_by_role": user.get("role", "UNKNOWN"),
@@ -1233,6 +1292,128 @@ def create_requirement():
 
     except Exception as e:
         print("❌ Error creating requirement:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/candidate-tracker/<int:candidate_id>", methods=["GET"])
+def get_candidate_tracker(candidate_id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 1. Get all requirements this candidate is associated with (via progress or screening)
+        # For now, let's assume if they are in candidate_progress, they are being tracked.
+        # If they are just screened, we might need to initialize progress?
+        # The user said "after a candidate is screened... he should be visible in this track route".
+        # So we should look for screening records too and maybe auto-initialize progress if missing.
+
+        # Let's just fetch requirements where we have progress OR screening
+        cursor.execute("""
+            SELECT DISTINCT r.id, r.title, r.client_id, c.name as client_name, r.no_of_rounds
+            FROM requirements r
+            LEFT JOIN clients c ON c.id = r.client_id
+            LEFT JOIN candidate_progress cp ON cp.requirement_id = r.id
+            LEFT JOIN candidate_screening cs ON cs.requirement_id = r.id
+            WHERE cp.candidate_id = %s OR cs.candidate_id = %s
+        """, (candidate_id, candidate_id))
+        
+        requirements = cursor.fetchall()
+        
+        tracker_data = []
+        
+        for req in requirements:
+            req_id = req["id"]
+            
+            # Get Stages
+            cursor.execute("""
+                SELECT id, stage_order, stage_name 
+                FROM requirement_stages 
+                WHERE requirement_id = %s 
+                ORDER BY stage_order ASC
+            """, (req_id,))
+            stages = cursor.fetchall()
+            
+            # Get Progress for each stage
+            cursor.execute("""
+                SELECT stage_id, status, decision, updated_at
+                FROM candidate_progress
+                WHERE candidate_id = %s AND requirement_id = %s
+            """, (candidate_id, req_id))
+            progress_rows = cursor.fetchall()
+            progress_map = {row["stage_id"]: row for row in progress_rows}
+            
+            stages_with_status = []
+            for stage in stages:
+                p = progress_map.get(stage["id"], {})
+                stages_with_status.append({
+                    "stage_id": stage["id"],
+                    "stage_name": stage["stage_name"],
+                    "stage_order": stage["stage_order"],
+                    "status": p.get("status", "PENDING"),
+                    "decision": p.get("decision", "NONE"),
+                    "updated_at": p.get("updated_at")
+                })
+                
+            tracker_data.append({
+                "requirement": req,
+                "stages": stages_with_status
+            })
+            
+        cursor.close()
+        conn.close()
+        
+        return jsonify(tracker_data), 200
+        
+    except Exception as e:
+        print("❌ Error fetching tracker:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/update-stage-status", methods=["POST"])
+def update_stage_status():
+    try:
+        data = request.get_json()
+        candidate_id = data.get("candidate_id")
+        requirement_id = data.get("requirement_id")
+        stage_id = data.get("stage_id")
+        status = data.get("status") # PENDING, IN_PROGRESS, COMPLETED, REJECTED
+        decision = data.get("decision") # NONE, MOVE_NEXT, HOLD, REJECT
+        
+        if not all([candidate_id, requirement_id, stage_id, status]):
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get stage name
+        cursor.execute("SELECT stage_name FROM requirement_stages WHERE id=%s", (stage_id,))
+        s_row = cursor.fetchone()
+        stage_name = s_row[0] if s_row else "Unknown"
+        
+        # Use INSERT ON DUPLICATE KEY UPDATE to handle both insert and update
+        # Note: Using explicit column names instead of VALUES() for MySQL 8.0+ compatibility
+        cursor.execute("""
+            INSERT INTO candidate_progress 
+            (candidate_id, requirement_id, stage_id, stage_name, status, decision)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE 
+                status = %s,
+                decision = %s,
+                updated_at = CURRENT_TIMESTAMP
+        """, (candidate_id, requirement_id, stage_id, stage_name, status, decision or 'NONE',
+              status, decision or 'NONE'))  # Repeat status and decision for UPDATE clause
+            
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({"message": "Status updated"}), 200
+        
+    except Exception as e:
+        print(f"❌ Error updating status: {e}")
+        print(f"   Details: candidate_id={candidate_id}, requirement_id={requirement_id}, stage_id={stage_id}, status={status}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
     
@@ -1769,6 +1950,75 @@ def delete_user(id):
         print("❌ Error deleting user:", e)
         return jsonify({"message": "❌ Error deleting user", "error": str(e)}), 500
 
+
+
+
+# -------------------------------------
+# Reports & Analytics
+# -------------------------------------
+@app.route("/api/reports/stats", methods=["GET"])
+def get_reports_stats():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 1. Requirements Stats
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_reqs,
+                SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as closed_reqs
+            FROM requirements
+        """)
+        req_stats = cursor.fetchone()
+
+        # 2. Candidate Stats
+        cursor.execute("SELECT COUNT(*) as total FROM candidates")
+        total_candidates = cursor.fetchone()['total']
+
+        # 3. Selections (Qualified Candidates)
+        # Candidates who have status='COMPLETED' in the LAST round of any requirement
+        cursor.execute("""
+            SELECT 
+                c.name as candidate_name,
+                r.title as requirement_title,
+                cl.name as client_name,
+                cp.updated_at as selection_date
+            FROM candidate_progress cp
+            JOIN candidates c ON c.id = cp.candidate_id
+            JOIN requirements r ON r.id = cp.requirement_id
+            JOIN requirement_stages rs ON rs.id = cp.stage_id
+            LEFT JOIN clients cl ON cl.id = r.client_id
+            WHERE rs.stage_order = r.no_of_rounds 
+              AND cp.status = 'COMPLETED'
+            ORDER BY cp.updated_at DESC
+        """)
+        selections = cursor.fetchall()
+
+        # 4. Requirements by Client
+        cursor.execute("""
+            SELECT 
+                c.name as client_name,
+                COUNT(r.id) as req_count
+            FROM requirements r
+            LEFT JOIN clients c ON c.id = r.client_id
+            GROUP BY c.name
+        """)
+        client_stats = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            "requirements": req_stats,
+            "candidates": {"total": total_candidates},
+            "selections": selections,
+            "client_stats": client_stats
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Error fetching report stats: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # -------------------------------------

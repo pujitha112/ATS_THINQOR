@@ -16,6 +16,7 @@ import RecruiterDashboard from "./components/RecruiterDashboard";
 import InterviewsPage from "./components/interviews";
 import CandidateList from "./components/CandidateList";
 import CandidateTracking from "./components/CandidateTracking";
+import Reports from "./components/Reports";
 
 export default function App() {
   return (
@@ -29,8 +30,8 @@ export default function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/logout" element={<Logout />} />
         <Route path="/admin-dashboard" element={<AdminDashboard />} />
-        <Route path="/dm-dashboard" element={<DmDashboard/>}/>
-        <Route path="/create-requirement" element={<CreateRequirements/>}/>
+        <Route path="/dm-dashboard" element={<DmDashboard />} />
+        <Route path="/create-requirement" element={<CreateRequirements />} />
         <Route path="/requirements" element={<Requirements />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/candidates" element={<CandidateApplicationUI />} />
@@ -38,10 +39,8 @@ export default function App() {
         <Route path="/recruiter-dashboard" element={<RecruiterDashboard />} />
         <Route path="/interviews" element={<InterviewsPage />} />
         <Route path="/candidate-tracking" element={<CandidateList />} />
-        <Route
-          path="/candidate-tracking/:candidateId/:requirementId"
-          element={<CandidateTracking />}
-        />
+        <Route path="/candidate-tracking/:candidateId/:requirementId" element={<CandidateTracking />} />
+        <Route path="/reports" element={<Reports />} />
 
         {/* Add other routes as needed */}
         {/* Example future routes:
