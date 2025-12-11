@@ -136,14 +136,6 @@ export default function DmDashboard() {
           </p>
         </div>
 
-        <div className="bg-white px-4 py-2 rounded-full shadow">
-          {new Date().toLocaleDateString(undefined, {
-            weekday: "long",
-            month: "long",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
       </div>
 
       {/* Stat Cards */}
@@ -188,9 +180,7 @@ export default function DmDashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow flex items-center justify-center text-gray-400">
-          <span>Widgets</span>
-        </div>
+       
       </div>
 
       {/* Recent Requirements */}

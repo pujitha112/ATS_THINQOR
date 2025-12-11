@@ -106,21 +106,21 @@ export default function TLDashboard() {
       value: stats?.open ?? "-",
       color: "#eaffef",
       accent: "green",
-      subtitle: `${stats?.urgent ?? 0} urgent`,
+      
     },
     {
       title: "Closed Requirements",
       value: stats?.closed ?? "-",
       color: "#fff3f8",
       accent: "pink",
-      subtitle: `${stats?.closedGrowthPercent ?? 0}% ↑`,
+      
     },
     {
       title: "Assigned to Recruiters",
       value: stats?.assigned ?? "-",
       color: "#fff6e8",
       accent: "yellow",
-      subtitle: `${stats?.pendingReview ?? 0} pending review`,
+    
     },
   ];
 
@@ -129,7 +129,6 @@ export default function TLDashboard() {
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between mb-8">
         <div>
-          <p className="text-indigo-500 text-sm">Good Afternoon</p>
           <h1 className="text-4xl font-extrabold text-indigo-700 mt-1">
             Team Lead Dashboard
           </h1>
@@ -138,14 +137,7 @@ export default function TLDashboard() {
           </p>
         </div>
 
-        <div className="bg-white px-4 py-2 rounded-full shadow">
-          {new Date().toLocaleDateString(undefined, {
-            weekday: "long",
-            month: "long",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
+       
       </div>
 
       {/* Stat Cards */}
@@ -190,9 +182,7 @@ export default function TLDashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow flex items-center justify-center text-gray-400">
-          <span>Widgets</span>
-        </div>
+        
       </div>
 
       {/* Recent Requirements */}

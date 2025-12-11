@@ -100,6 +100,27 @@ def initialize_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        #----------------------------
+        #Interviewers TABLE
+        #----------------------------
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS interviews (
+                       id INT AUTO_INCREMENT PRIMARY KEY,
+                candidate_id INT NOT NULL,
+                requirement_id VARCHAR(64),
+                category VARCHAR(50),
+                stage VARCHAR(100),
+                date DATE,
+                time TIME,
+                duration VARCHAR(50),
+                mode VARCHAR(50),
+                location VARCHAR(255),
+                interviewer VARCHAR(255),
+                notes TEXT,
+                status VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)    
 
         # ---------------------------
         # REQUIREMENTS TABLE

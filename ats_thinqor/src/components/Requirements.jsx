@@ -76,8 +76,8 @@ export default function Requirements() {
     }
   };
 
-  const canCreate = ["ADMIN", "DELIVERY_MANAGER"].includes(user?.role);
-  const canAssign = ["ADMIN", "DELIVERY_MANAGER"].includes(user?.role);
+  const canCreate = ["ADMIN", "DELIVERY_MANAGER", "TEAM_LEAD"].includes(user?.role);
+  const canAssign = ["ADMIN", "DELIVERY_MANAGER", "TEAM_LEAD"].includes(user?.role);
 
   const handleAssignConfirm = async () => {
     if (!selectedReq || !selectedRecruiter) return;
